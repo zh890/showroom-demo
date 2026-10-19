@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <title>我的轻奢展厅</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #1a1a1a;
+    }
+
+    #info {
+      position: absolute;
+      top: 20px;
+      width: 100%;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.6);
+      font-family: sans-serif;
+      font-size: 14px;
+      pointer-events: none;
+      /* text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5); */
+    }
+
+    #loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 20px;
+    }
+
+    #title {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 24px;
+    }
+
+    #contact {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 14px;
+    }
+
+    #tourBtn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #fff;
+      border-radius: 20px;
+      cursor: pointer;
+      font-family: sans-serif;
+      backdrop-filter: blur(5px);
+      transition: 0.3s;
+    }
+
+    #tourBtn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="info"></div>
+  <div id="loading">模型加载中...</div>
+  <div id="title">我的轻奢展厅</div>
+  <div id="contact">联系我:dy:体素造物，b站:Sogon-Luce</div>
+  <button id="tourBtn">开启自动巡游</button>
+  <div id="card" style="
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 320px;
+    background: rgba(20, 20, 20, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 16px;
+    padding: 24px;
+    color: #fff;
+    font-family: sans-serif;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    z-index: 999;
+  ">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 id="cardTitle" style="margin:0;font-size:18px;font-weight: 500;">产品名称</h3>
+      <span id="closeCard" style="cursor:pointer;font-size:20px;opacity:0.6;">&times;</span>
+    </div>
+    <p id="cardDesc" style="margin:0 0 12px;font-size:14px;line-height:1.6;color:rgba(255 255 255 0.7)">产品描述</p>
+    <div id="cardPrice" style="font-size:16px;font-weight: 600;color:#e8c47a">参考价: ¥299</div>
+  </div>
+
+  <!-- 引入 Three.js 核心库和扩展库 -->
+  <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    let isTouring = false; // 巡游状态标志
+    let tourProgress = 0; // 巡游进度
+    let curve = null; // 巡游路径曲线
+    let needsRender = true; // 是否需要更新渲染
+    let selectedMesh = null; // 当前选中的展品
+    let originalEmissive = new THREE.Color(0, 0, 0); // 存储原始发光材质
+    let frameCount = 0; // 帧计数器
+
+    // 1. 创建场景
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x222222); // 深灰背景
+
+    const rgbeLoader = new RGBELoader();
+    rgbeLoader.load('studio_small_09_1k.hdr', function (texture) {
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      scene.environment = texture; // 设置环境贴图
+      scene.environmentIntensity = 0.3; // 环境光强度
+    });
+
+    const groundGeometry = new THREE.PlaneGeometry(100, 100);
+    const groundMaterial = new THREE.ShadowMaterial({ color: 0x333333, opacity: 0.8 });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.01; // 轻微下移，避免 z-fighting
+    ground.receiveShadow = true; // 地面接收阴影
+    scene.add(ground);
+
+    // 2. 创建相机
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 1.5, 1); // 相机放在大门前稍微高一点的位置
+
+
+    // 3. 创建渲染器
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1)); // 限制像素比，防止性能问题
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; // 电影级色调映射，让灯带更亮
+    renderer.toneMappingExposure = 0.25;// 曝光度，控制整体亮度
+    document.body.appendChild(renderer.domElement);
+    // renderer.shadowMap.enabled = true; // 开启阴影
+    // renderer.shadowMap.type = THREE.PCFSoftShadowMap; // 阴影类型
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.15, 0.4, 0.85);
+    composer.addPass(bloomPass);
+
+    //识别手机
+    const controls = new OrbitControls(camera, renderer.domElement);
+    const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+
+    if (isMobile) {
+      renderer.setPixelRatio(1); // 降低像素比
+      renderer.shadowMap.enabled = false; // 关闭阴影
+      bloomPass.enabled = false; // 关闭 bloom 效果
+      controls.enableDamping = true; // 惯性滑动
+      controls.dampingFactor = 0.1; // 惯性滑动系数
+      controls.rotateSpeed = 0.5; // 降低旋转速度
+    }
+
+    document.getElementById('info').textContent = isMobile
+      ? '触摸旋转 / 捏合缩放 / 双指平移'
+      : '鼠标左键旋转 / 滚轮缩放 / 右键平移';
+
+    // 4. 添加轨道控制器（实现鼠标拖动）
+
+    //controls.enableDamping = false; // 惯性滑动
+    controls.target.set(0, 1.2, 0); // 控制器的目标点设置在模型中心稍微高一点的位置
+    // controls.autoRotate = false; // 默认关闭自动旋转
+    controls.autoRotateSpeed = 1.5; // 自动旋转速度
+
+    const tourBtn = document.getElementById('tourBtn');
+    tourBtn.addEventListener('click', () => {
+      isTouring = !isTouring;
+      if (isTouring) {
+        // tourProgress = 0; // 重置巡游进度
+        controls.enabled = false; // 禁止手动旋转
+        tourBtn.textContent = '关闭自动巡游';
+      } else {
+        controls.enabled = true; // 允许手动旋转
+        tourBtn.textContent = '开启自动巡游';
+      }
+    });
+
+
+    // 5. 添加基础灯光（防止网页里死黑）
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffe5cc, 0.6);
+    dirLight.position.set(0, 10, 5);
+    scene.add(dirLight);
+
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 50;
+    dirLight.shadow.camera.left = -10;
+    dirLight.shadow.camera.right = 10;
+    dirLight.shadow.camera.top = 10;
+    dirLight.shadow.camera.bottom = -10;
+    dirLight.shadow.bias = -0.0005; // 阴影偏移，防止阴影闪烁
+
+    // 6. 加载 GLB 模型
+    const loader = new GLTFLoader();
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/');
+    loader.setDRACOLoader(dracoLoader);
+    loader.load('showroom.glb', (gltf) => {
+      scene.add(gltf.scene);
+      const pathPoints = [
+        new THREE.Vector3(0, 1.5, 10), // 起点
+        new THREE.Vector3(0, 1.5, 5), // 中间点
+        new THREE.Vector3(0, 1.5, 1),
+        new THREE.Vector3(-2, 1.5, 0), // 中间点
+        new THREE.Vector3(0, 1.5, -2.5), // 中间点
+        new THREE.Vector3(2.5, 1.5, -2.5), // 中间点
+        new THREE.Vector3(2.5, 1.5, -1),
+        new THREE.Vector3(0, 1.5, 0), // 中间点
+      ];
+      curve = new THREE.CatmullRomCurve3(pathPoints);
+      curve.closed = true; // 闭合曲线，形成环形巡游路径
+      curve.spacedPoints = curve.getSpacedPoints(3000); // 曲线上的点数，越多越平滑
+
+      document.getElementById('loading').style.display = 'none'; // 隐藏加载提示
+      console.log('模型加载成功！');
+
+      const exhibitsDB = {
+        'bronze': { title: '鲨鱼雕像', desc: '采用高质量材质制作，放置在展厅的中心位置。', price: '¥299' },
+        'watch': { title: '魔法怀表', desc: '可以穿越时间的怀表', price: '¥？？？' },
+        'book': { title: '古老的书', desc: '一本充满神秘力量的古老书籍', price: '¥？？？' },
+        'pingan': { title: '平安扣摆件', desc: '保佑平安的护身扣', price: '¥129' },
+        'pan': { title: '精致陶瓷釉盘套件', desc: '用于放置物品或菜品的精美盘子', price: '¥29' },
+        'cylinder003': { title: '精美陶瓷茶壶', desc: '用于泡茶的精美茶壶', price: '¥49' },
+        'box': { title: '茶叶盒', desc: '存放着各种茶叶的盒子', price: '¥39' },
+        'potion': { title: '魔法药水瓶', desc: '装有神秘魔法药水的瓶子', price: '¥ ? ? ?' },
+        'whisky': { title: '威士忌酒', desc: '陈年威士忌，口感醇厚', price: '¥599' },
+        'wine': { title: '红酒', desc: '精选葡萄酿造的红酒，适合搭配美食', price: '¥399' },
+        'beer': { title: '精酿啤酒', desc: '采用优质麦芽和啤酒花酿造的精酿啤酒', price: '¥29' }
+      }
+
+      gltf.scene.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true; // 模型投射阴影
+          child.receiveShadow = true; // 模型接收阴影
+
+          if (child.name.toLowerCase().includes('Cylinder004')) {
+            if (child.material) {
+              child.material.emissive = new THREE.Color(0xFFD36E);
+              child.material.emissiveIntensity = 3.0;
+            }
+          }
+
+          const name = child.name.toLowerCase();
+          for (let key in exhibitsDB) {
+            if (name.includes(key)) {
+              child.userData.isExhibit = true;
+              child.userData.info = exhibitsDB[key];
+              break;
+            }
+          }
+        }
+      });
+      needsRender = true; // 模型加载完成后标记需要渲染
+    }, (xhr) => {
+      const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
+      document.getElementById('loading').textContent = `模型较大，首次加载约需2~3分钟... ${percent}%`;
+    }, (error) => {
+      console.error('模型加载失败，请检查路径：', error);
+    });
+
+    // 7. 动画循环
+    controls.addEventListener('change', () => {
+      needsRender = true; // 当控制器改变时，标记需要渲染
+    });
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function onMouseClick(event) {
+      if (isTouring) return; // 巡游状态下不响应点击
+
+      pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+      pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(scene.children, true);
+
+      let hit = null;
+      for (let i = 0; i < intersects.length; i++) {
+        if (intersects[i].object.userData.isExhibit) {
+          hit = intersects[i].object;
+          break;
+        }
+      }
+
+      if (selectedMesh && selectedMesh.material && selectedMesh.material.emissive) {
+        // 恢复上一个选中展品的材质
+        selectedMesh.material.emissive.copy(originalEmissive);
+      }
+
+      if (hit) {
+        selectedMesh = hit;
+        if (hit.material.emissive) {
+          originalEmissive.copy(hit.material.emissive); // 保存原始发光材质
+          hit.material.emissive.set(0x444444); // 设置选中展品的发光材质
+        }
+
+        const info = hit.userData.info;
+        document.getElementById('cardTitle').textContent = info.title;
+        document.getElementById('cardDesc').textContent = info.desc;
+        document.getElementById('cardPrice').textContent = `参考价: ` + info.price;
+        document.getElementById('card').style.display = 'block';
+      } else {
+        if (selectedMesh && selectedMesh.material && selectedMesh.material.emissive) {
+          selectedMesh.material.emissive.copy(originalEmissive); // 恢复材质
+        }
+        selectedMesh = null;
+        document.getElementById('card').style.display = 'none';
+      }
+    }
+
+    window.addEventListener('click', onMouseClick);
+
+    document.getElementById('closeCard').addEventListener('click', (e) => {
+      e.stopPropagation()
+      document.getElementById('card').style.display = 'none';
+      if (selectedMesh && selectedMesh.material && selectedMesh.material.emissive) {
+        selectedMesh.material.emissive.copy(originalEmissive); // 恢复材质
+        selectedMesh = null;
+      }
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      frameCount++;
+
+      if (isTouring) {
+        const speed = 0.0007; // 巡游速度
+        tourProgress += speed;
+        tourProgress %= 1; // 保持在 [0, 1] 范围内
+
+        const division = curve.spacedPoints.length - 1;// 获取曲线点的数量
+        const idx = Math.floor(tourProgress * division) % division; // 获取当前点的索引
+
+        const current = curve.spacedPoints[idx];
+        const target = curve.spacedPoints[(idx + 100) % division];
+
+        camera.position.copy(current);
+        camera.lookAt(target);
+        needsRender = true; // 巡游时标记需要渲染
+      } else {
+        controls.update(); // ← 非巡游时更新控制器（阻尼/惯性）
+      }
+
+      // ← 加回这段：满足条件就渲染
+      if (needsRender || frameCount < 120) {
+        composer.render();
+        needsRender = false;
+      }
+    }
+    animate();
+
+    // 8. 窗口大小自适应
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+      needsRender = true; // 窗口大小改变时标记需要渲染
+    });
+  </script>
+</body>
+
+</html>
